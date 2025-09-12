@@ -1,7 +1,8 @@
 ---
 title: "Stats-506 Problem Set #1"
 format: pdf
-author: Zhekai Liu
+author: "Zhekai Liu"
+subtitle: "[GitHub Repository: https://github.com/zkl2002/Stats-506/](https://github.com/zkl2002/Stats-506/)"
 editor: visual
 ---
 
