@@ -1,0 +1,374 @@
+---
+title: "Stats-506 Problem Set #2"
+format: pdf
+author: "Zhekai Liu"
+subtitle: "[GitHub Repository: https://github.com/zkl2002/Stats-506/](https://github.com/zkl2002/Stats-506/)"
+editor: visual
+---
+
+## Problem 1 - Modified Random walk
+
+## (a).
+
+**Step function:**
+
+```{r}
+#' Sample walk increments
+#' @return One time random return with values in {-3,-1,1,10}.
+random_step <- function() {
+  u1 <- runif(1)
+  u2 <- runif(1)
+  if (u1 < 0.5) {
+    if (u2 < 0.20) -3L else -1L
+  } else {
+    if (u2 < 0.05) 10L else 1L
+  }
+}
+```
+
+**Version 1: using a loop**
+
+```{r}
+#' Random walk (loop version)
+#' @param n Number of steps (non-negative integer).
+#' @return Final position of the walk.
+random_walk1 <- function(n, seed=NULL) {
+  # check input
+  if (!(length(n) == 1L && is.numeric(n) && is.finite(n) &&
+        n >= 0 && n == as.integer(n))) {
+    stop("input must be one non-negative integer")
+  }
+  if (!is.null(seed)) set.seed(seed)
+  n <- as.integer(n)
+  if (n == 0L) return(0L)
+  # for loop
+  pos <- 0L
+  for (i in seq_len(n)) pos <- pos + random_step()
+  pos
+}
+```
+
+**Version 2: using built-in R vectorized function**
+
+```{r}
+#' Random walk version 2 - built-in R vectorized
+#' @param n Number of steps.
+#' @return Final position of the walk.
+random_walk2 <- function(n, seed=NULL) {
+  # check input
+  if (!(length(n) == 1L && is.numeric(n) && is.finite(n) &&
+        n >= 0 && n == as.integer(n))) {
+    stop("input must be one non-negative integer")
+  }
+  if (!is.null(seed)) set.seed(seed)
+  n <- as.integer(n)
+  if (n == 0L) return(0L)
+  # built-in R vectorzed
+  u <- runif(2L * n)
+  u1 <- u[c(TRUE, FALSE)]
+  u2 <- u[c(FALSE, TRUE)]
+  dir_pos <- u1 >= 0.5
+  inc <- integer(n)
+  inc[dir_pos] <- ifelse(u2[dir_pos] < 0.05, 10L, 1L)
+  inc[!dir_pos] <- ifelse(u2[!dir_pos] < 0.20, -3L, -1L)
+  sum(inc)
+}
+```
+
+**Version 3: using apply function**
+
+```{r}
+#' Random walk (inside vapply)
+#' @param n Number of steps to take
+#' @return Final position after n steps
+random_walk3 <- function(n, seed=NULL) {
+  # check input
+  if (!(length(n) == 1L && is.numeric(n) && is.finite(n) &&
+        n >= 0 && n == as.integer(n))) {
+    stop("input must be one non-negative integer")
+  }
+  # using vapply
+  if (!is.null(seed)) set.seed(seed)
+  n <- as.integer(n)
+  if (n == 0L) return(0L)
+  inc <- vapply(seq_len(n), function(i) random_step(), integer(1))
+  sum(inc)
+}
+```
+
+**Show results:**
+
+```{r}
+random_walk1(10)
+```
+
+```{r}
+random_walk2(10)
+```
+
+```{r}
+random_walk3(10)
+```
+
+```{r}
+random_walk1(1000)
+```
+
+```{r}
+random_walk2(1000)
+```
+
+```{r}
+random_walk3(1000)
+```
+
+## (b).
+
+```{r}
+c(random_walk1(10, seed = 506),
+  random_walk2(10, seed = 506),
+  random_walk3(10, seed = 506))
+```
+
+```{r}
+c(random_walk1(1000, seed = 506),
+  random_walk2(1000, seed = 506),
+  random_walk3(1000, seed = 506))
+```
+
+With same random seed, the result of all three methods are same.
+
+## (c).
+
+```{r}
+library(microbenchmark)
+## n = 1,000
+bench_1000 <- microbenchmark(
+  loop  = random_walk1(1000, seed = 506),
+  vec   = random_walk2(1000, seed = 506),
+  apply = random_walk3(1000, seed = 506)
+)
+bench_1000
+```
+
+```{r}
+## n = 100,000
+bench_10k <- microbenchmark(
+  loop  = random_walk1(100000, seed = 506),
+  vec   = random_walk2(100000, seed = 506),
+  apply = random_walk3(100000, seed = 506)
+)
+bench_10k
+```
+
+The fully vectorized implementation is consistently the fastest, then for-loop version comes next, and the apply method approach is the slowest. As the input size grows from 1k to 100k, the performance doesn't change.
+
+## (d).
+
+```{r}
+reps <- 10000
+set.seed(506)
+position_10 <- replicate(reps, random_walk2(10, seed = NULL))
+cat("The probability that the random walk ends at 0 with 10 steps is:",
+    mean(position_10 == 0))
+```
+
+```{r}
+set.seed(506)
+position_100 <- replicate(reps, random_walk2(100, seed = NULL))
+cat("The probability that the random walk ends at 0 with 100 steps is:",
+    mean(position_100 == 0))
+```
+
+```{r}
+set.seed(506)
+position_1000 <- replicate(reps, random_walk2(1000, seed = NULL))
+cat("The probability that the random walk ends at 0 with 1000 steps is:",
+    mean(position_1000 == 0))
+```
+
+With Monte Carlo simulation, the probability of random walk ends at 0 is becoming smaller and closer to 0 with steps 10, 100 and 1000.
+
+## **Problem 2 - Mean of Mixture of Distributions**
+
+```{r}
+set.seed(506)
+reps <- 10000
+
+daily <- rpois(reps, 8)   + 
+         rnorm(reps, 120, sqrt(24)) +
+         rpois(reps, 64)  +
+         rpois(reps, 72)
+
+mean(daily)
+```
+
+By Monte Carlo simulation, the average number of cars pass this intersection daily is about 264.
+
+## **Problem 3 - Linear Regression**
+
+```{r}
+youtube <- read.csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2021/2021-03-02/youtube.csv')
+```
+
+## (a).
+
+```{r}
+colnames(youtube)
+```
+
+```{r}
+drop_cols <- c("brand", "superbowl_ads_dot_com_url", "youtube_url",
+             "thumbnail", "channel_title", "published_at",
+             "id", "kind", "etag", "title", "description")
+youtube_deid <- youtube[ , !(names(youtube) %in% drop_cols)]
+youtube <- youtube_deid
+dim(youtube)
+```
+
+The dimension of the data after de-identify is 247 rows and 14 columns.
+
+## (b).
+
+**view_count:**
+
+```{r}
+hist(youtube$view_count, main="view_count", xlab="")
+```
+
+```{r}
+hist(log1p(youtube$view_count), main="log1p(view_count)", xlab="")
+```
+
+```{r}
+youtube$view_count_log <- log1p(youtube$view_count)
+```
+
+view_count variable can use a transformation prior to being used as the outcome in a linear regression model.
+
+The view_count variable is extremely right-skewed, so we apply a $log(1+x)$ transformation on it.
+
+**like_count:**
+
+```{r}
+hist(youtube$like_count, main="like_count", xlab="")
+```
+
+```{r}
+hist(log1p(youtube$like_count), main="log1p(like_count)", xlab="")
+```
+
+```{r}
+youtube$like_count_log <- log1p(youtube$like_count)
+```
+
+like_count variable can use a transformation prior to being used as the outcome in a linear regression model.
+
+The like_count variable is extremely right-skewed, so we apply a $log(1+x)$ transformation on it.
+
+**dislike_count:**
+
+```{r}
+hist(youtube$dislike_count, main="dislike_count", xlab="")
+```
+
+```{r}
+hist(log1p(youtube$dislike_count), main="log1p(dislike_count)", xlab="")
+```
+
+```{r}
+youtube$dislike_count_log <- log1p(youtube$dislike_count)
+```
+
+dislike_count variable can use a transformation prior to being used as the outcome in a linear regression model.
+
+The dislike_count variable is extremely right-skewed, so we apply a $log(1+x)$ transformation on it.
+
+**favorite_count:**
+
+```{r}
+unique(youtube$favorite_count)
+```
+
+favorite_count only have 0 and null elements, so this variable would not be appropriate to use as the outcome in a linear regression model.
+
+**comment_count:**
+
+```{r}
+hist(youtube$comment_count, main="comment_count", xlab="")
+```
+
+```{r}
+hist(log1p(youtube$comment_count), main="log1p(comment_count)", xlab="")
+```
+
+```{r}
+youtube$comment_count_log <- log1p(youtube$comment_count)
+```
+
+comment_count variable can use a transformation prior to being used as the outcome in a linear regression model.
+
+The comment_count variable is extremely right-skewed, so we apply a $log(1+x)$ transformation on it.
+
+## (c).
+
+**view_count:**
+
+```{r}
+fit_view <- lm(view_count_log ~ year + funny + show_product_quickly +
+            patriotic + celebrity + danger + animals + use_sex,
+          data = youtube)
+summary(fit_view)
+```
+
+There’s no statistically reliable association between ad attributes and view counts. The estimated directions are all not significant. So we could not provide any significant result.
+
+**like_count:**
+
+```{r}
+fit_like <- lm(like_count_log ~ year + funny + show_product_quickly +
+            patriotic + celebrity + danger + animals + use_sex,
+          data = youtube)
+summary(fit_like)
+```
+
+For like_count, only year shows a positive and statistically significant association with like counts. Danger shows a positive tendency but doesn’t reach conventional significance, and the other ad features show no statistically significant associations. As result, only like count numbers would increase with time.
+
+**dislike_count:**
+
+```{r}
+fit_dislike <- lm(dislike_count_log ~ year + funny + show_product_quickly +
+            patriotic + celebrity + danger + animals + use_sex,
+          data = youtube)
+summary(fit_dislike)
+```
+
+For dislike_count, only year has a significant positive association with dislike counts. Patriotic shows a positive tendency but doesn’t reach conventional significance, and the other ad features show no statistically significant associations. These also means with time increase, dislike count would also increase.
+
+**comment_count:**
+
+```{r}
+fit_comment <- lm(comment_count_log ~ year + funny + show_product_quickly +
+            patriotic + celebrity + danger + animals + use_sex,
+          data = youtube)
+summary(fit_comment)
+```
+
+For log comment counts, there are only marginal positive associations with year and patriotic, but they do not reach the conventional 0.05 significance level. The other ad features show no statistically reliable associations, and the model’s explanatory power is low.
+
+## (d).
+
+```{r}
+vars <- c("view_count_log","year","funny","show_product_quickly",
+          "patriotic","celebrity","danger","animals","use_sex")
+dat <- na.omit(youtube[ , vars])
+
+X <- model.matrix(view_count_log ~ year + funny + show_product_quickly +
+                    patriotic + celebrity + danger + animals + use_sex,
+                  data = dat)
+y <- dat$view_count_log
+beta_hat <- solve(t(X) %*% X, t(X) %*% y)
+beta_hat
+```
+
+The result is same with the lm model in part c.
