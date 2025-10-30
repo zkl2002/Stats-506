@@ -1,0 +1,265 @@
+---
+title: "Stats-506 Problem Set #4"
+format: pdf
+author: "Zhekai Liu"
+subtitle: "[GitHub Repository: https://github.com/zkl2002/Stats-506/](https://github.com/zkl2002/Stats-506/)"
+editor: visual
+---
+
+```{r}
+library(nzelect)
+library(tidyverse)
+library(ggplot2)
+library(scales)
+library(slider)
+```
+
+# Problem 1 - **Tidyverse: New Zealand**
+
+## (a).
+
+```{r}
+nzge %>%
+  count(election_year, voting_type, wt = votes, name = "vote_count") %>%
+  arrange(desc(vote_count))
+```
+
+## (b).
+
+```{r}
+nzge %>%
+  filter(election_year == 2014, voting_type == "Candidate") %>%
+  count(party, wt = votes, name = "votes") %>%
+  mutate(percent = votes / sum(votes) * 100) %>%
+  arrange(desc(percent))
+```
+
+## (c).
+
+```{r}
+cand <- nzge %>%
+  filter(voting_type == "Candidate") %>%
+  count(election_year, party, wt = votes, name = "votes") %>%
+  slice_max(votes, n = 1, by = election_year) %>%
+  transmute(election_year, Candidate_winner = party)
+
+prty <- nzge %>%
+  filter(voting_type == "Party") %>%
+  count(election_year, party, wt = votes, name = "votes") %>%
+  slice_max(votes, n = 1, by = election_year) %>%
+  transmute(election_year, Party_winner = party)
+
+cand %>%
+  inner_join(prty, by = "election_year") %>%
+  arrange(election_year)
+```
+
+# Problem 2 - **Tidyverse: Tennis**
+
+```{r}
+# url <- "https://raw.githubusercontent.com/JeffSackmann/tennis_atp/refs/heads/master/atp_matches_2019.csv"
+# 
+# download.file(url, destfile = "atp_matches_2019.csv", mode = "wb", quiet = TRUE)
+```
+
+```{r}
+tennis <- read.csv("atp_matches_2019.csv")
+```
+
+## (a).
+
+```{r}
+tennis %>%
+  summarise(tournaments_number = n_distinct(tourney_id))
+```
+
+I treat any match whose `tourney_id` starts with `2019-` as belonging to the **2019 season**, even if some matches occurred in **2018-12**. Using this season-based definition to count tournaments is generally more consistent with tennis statistics practice.
+
+In 2019, there were **128** ATP tournaments based on distinct `tourney_id` values in the 2019 matches file.
+
+## (b).
+
+```{r}
+winners <- tennis %>%
+  filter(round == "F") %>%
+  select(tourney_id, winner_id, winner_name)
+
+titles <- winners %>%
+  count(winner_id, winner_name, name = "titles") %>%
+  arrange(desc(titles), winner_name)
+```
+
+```{r}
+titles %>%
+  count(titles > 1)
+```
+
+```{r}
+titles %>% filter(titles == max(titles))
+```
+
+**12** players won more than one tournament, and the top winners each won **5** tournaments.
+
+## (c).
+
+```{r}
+tennis %>%
+  transmute(diff = w_ace - l_ace) %>%
+  drop_na(diff) %>%
+  pull(diff) %>%
+  stats::t.test(mu = 0, alternative = "two.sided")
+```
+
+```{r}
+tennis %>%
+  transmute(diff = w_ace - l_ace) %>%
+  drop_na(diff) %>%
+  summarise(
+    n = n(),
+    mean_diff = mean(diff),
+    sd  = sd(diff),
+    se  = sd / sqrt(n),
+    t   = mean_diff / se,
+    df  = n - 1,
+    p_two_sided = 2 * (1 - stats::pt(abs(t), df = df)),
+    p_greater   = 1 - stats::pt(t, df = df),
+    ci_low_t  = mean_diff - stats::qt(0.975, df) * se,
+    ci_high_t = mean_diff + stats::qt(0.975, df) * se
+  )
+```
+
+There is strong statistical evidence that winners record more aces than losers. The estimated mean difference is about **1.705 aces per match** (95% CI: **1.435 to 1.975**) with nearly 0 p-value, so winners, on average, usually have more than one aces than losers.
+
+## (d).
+
+```{r}
+bind_rows(
+  tennis %>% transmute(player_id = winner_id, player_name = winner_name, won = 1L),
+  tennis %>% transmute(player_id = loser_id,  player_name = loser_name,  won = 0L)
+) %>%
+  summarise(
+    matches  = n(),
+    wins     = sum(won),
+    win_rate = wins / matches,
+    .by = c(player_id, player_name)
+  ) %>%
+  filter(matches >= 5) %>%
+  filter(win_rate == max(win_rate)) %>%
+  arrange(desc(win_rate), desc(matches), player_name)
+```
+
+Among players with **≥ 5 matches**, the highest win rate is **Rafael Nadal** with **60 wins in 69 matches** — win rate **≈ 86.96%**.
+
+# Problem 3 - Visualization
+
+```{r}
+# url <- "https://raw.githubusercontent.com/nytimes/covid-19-data/refs/heads/master/rolling-averages/us-states.csv"
+# 
+# download.file(url, destfile = "us-states.csv", mode = "wb", quiet = TRUE)
+```
+
+```{r}
+# df_us <- read_csv("us.csv", show_col_types = FALSE)
+df_states <- read_csv("us-states.csv", show_col_types = FALSE)
+```
+
+## (a).
+
+```{r}
+df_us <- df_states %>%
+  mutate(date = as.Date(date)) %>%
+  group_by(date) %>%
+  summarise(cases_avg = sum(cases_avg, na.rm = TRUE), .groups = "drop")
+
+ggplot(df_us, aes(date, cases_avg)) +
+  geom_line(linewidth = 0.5) +
+  scale_y_continuous(labels = label_comma()) +
+  labs(title = "US COVID-19 — 7-day Average New Cases",
+       subtitle = "NYTimes rolling-averages (national series)",
+       x = NULL, y = "Cases (7-day avg)") +
+  theme_minimal(base_size = 12)
+```
+
+Since daily counts may jump around and might be noisy, we could use 7-day avg to shows the real trend in recent periods.
+
+The plot shows **a single major spike at the beginning of 2022**. In addition, there are roughly **five minor spikes**—around mid-2020, late-2020 to early-2021, mid-to-late 2021, mid-2022, and late-2022 to early-2023.
+
+## (b).
+
+```{r}
+ranked <- df_states %>%
+  summarise(
+    overall_rate = mean(cases_avg_per_100k, na.rm = TRUE),
+    .by = state
+  ) %>%
+  arrange(desc(overall_rate))
+
+top_state <- ranked %>% slice_head(n = 1)
+bot_state <- ranked %>% slice_tail(n = 1)
+```
+
+```{r}
+df_states %>%
+  filter(state %in% c(top_state, bot_state)) %>%
+  ggplot(aes(date, cases_avg_per_100k)) +
+  geom_line(linewidth = 0.5) +
+  facet_wrap(~ state, ncol = 3) +
+  scale_y_continuous(labels = label_number(accuracy = 1)) +
+  labs(
+    title = "COVID-19 — 7-day avg cases per 100k",
+    subtitle = paste0("Highest (left) ", "vs Lowest (right) "
+                      , "state by overall mean rate per population"),
+    x = NULL, y = "Cases per 100k (7-day avg)"
+  ) +
+  theme_minimal(base_size = 12)
+```
+
+**American Samoa has highest** overall mean rate and **Maryland has lowest**.\
+American Samoa shows **short, very high spikes** (peaks \>500 per 100k) with long stretches **near zero** between waves, whereas Maryland’s peaks are **much lower** (about 220 per 100k) but **broader and more persistent**, with a higher baseline and ongoing mid-sized waves. The peak of American Samoa is between 2022\~2023 and the peak of Maryland is around winter 2021.
+
+## (c).
+
+```{r}
+thr  <- 10
+kday <- 7
+
+first_hit <- df_states %>%
+  arrange(state, date) %>%
+  group_by(state) %>%
+  mutate(
+    hit = cases_avg_per_100k >= thr,
+    hit_k = slide_lgl(hit, ~ all(.x), .before = kday - 1, .complete = TRUE)
+  ) %>%
+  summarise(first_date = min(date[hit_k], na.rm = TRUE), .groups = "drop") %>%
+  filter(is.finite(first_date))
+
+ref_date <- min(first_hit$first_date, na.rm = TRUE)
+rank_df <- first_hit %>%
+  mutate(days_since_earliest = as.integer(first_date - ref_date)) %>%
+  arrange(first_date)
+```
+
+```{r}
+rank_df$state[1]
+rank_df$first_date[1]
+```
+
+I defined an “outbreak” as a 7-day average of **≥ 10 cases per 100k** sustained for **7 consecutive days** (`cases_avg_per_100k`). For each state, I identified the **first date** that meets this criterion, then used the **earliest state’s** date as a baseline to compute the **days_since_earliest** for all other states. The earliest state is **New York** at **2020-03-28**.
+
+```{r, fig.width=10, fig.height=10, out.width='100%'}
+ggplot(rank_df, aes(x = reorder(state, -days_since_earliest)
+                    , y = days_since_earliest)) +
+  geom_col() +
+  coord_flip() +
+  scale_y_continuous(labels = label_number(accuracy = 1)) +
+  labs(
+    title = "First crossing of 7-day avg ≥ 10 per 100k by state",
+    subtitle = paste0("Rule: ≥ ", thr, " per 100k for ", kday,
+                      " consecutive days; bars = days since earliest state (",
+                      ref_date, ")"),
+    x = NULL, y = "Days since earliest crossing (shorter = earlier)"
+  ) +
+  theme_minimal(base_size = 12)
+```
+
+The plotted shows a bar chart where **shorter bars indicate earlier onset**. The top five states are: **New York, New Jersey, Massachusetts, Connecticut and Louisiana.**
