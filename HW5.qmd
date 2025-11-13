@@ -1,0 +1,634 @@
+---
+title: "Stats-506 Problem Set #5"
+format:
+  html:
+    self-contained: true
+author: "Zhekai Liu"
+subtitle: "[GitHub Repository: https://github.com/zkl2002/Stats-506/](https://github.com/zkl2002/Stats-506/)"
+editor: visual
+---
+
+# Problem 1 - OOP Programming
+
+## (a).
+
+**Constructor and Validator**
+
+```{r}
+.wald_bounds <- function(m, se, level) {
+  if (length(m) != 1 || length(se) != 1 || !is.finite(m) || !is.finite(se)) {
+    stop("mean and sterr must be finite length-1 numbers")
+  }
+  if (se < 0) stop("sterr (standard error) cannot be negative")
+  if (length(level) != 1 || !is.finite(level) || level <= 0 || level >= 1) {
+    stop("level must be a single number in (0,1)")
+  }
+  m  <- unname(m)
+  se <- unname(se)
+  level <- unname(level)
+  z  <- qnorm(1 - (1 - level)/2)
+  c(lb = m - z*se, ub = m + z*se)
+}
+
+.wald_from_bounds <- function(lb, ub, level) {
+  if (length(lb) != 1 || length(ub) != 1 || !is.finite(lb) || !is.finite(ub))
+    stop("lb and ub must be finite length-1 numbers")
+  if (lb > ub) stop("lb cannot be greater than ub")
+  if (length(level) != 1 || !is.finite(level) || level <= 0 || level >= 1)
+    stop("level must be a single number in (0,1)")
+  lb <- unname(lb)
+  ub <- unname(ub)
+  level <- unname(level)
+  m  <- (lb + ub)/2
+  half <- (ub - lb)/2
+  z  <- qnorm(1 - (1 - level)/2)
+  se <- half / z
+  c(mean = m, sterr = se)
+}
+
+setClass(
+  "waldCI",
+  slots = c(
+    mean  = "numeric",
+    sterr = "numeric",
+    level = "numeric"
+  )
+)
+
+setValidity("waldCI", function(object) {
+  if (length(object@mean)  != 1 || !is.finite(object@mean))
+    return("mean must be a single finite number")
+  if (length(object@sterr) != 1 || !is.finite(object@sterr))
+    return("sterr must be a single finite number")
+  if (object@sterr < 0)
+    return("sterr cannot be negative")
+  if (length(object@level) != 1 || !is.finite(object@level) ||
+      object@level <= 0 || object@level >= 1)
+    return("level must be a single number in (0,1)")
+  TRUE
+})
+
+waldCI <- function(level, mean = NULL, sterr = NULL, lb = NULL, ub = NULL) {
+  if (missing(level)) stop("Must supply 'level' in (0,1)")
+  if ( (!is.null(mean) || !is.null(sterr)) && (!is.null(lb) || !is.null(ub)) )
+    stop("Supply either (mean, sterr) or (lb, ub), not both")
+
+  if (!is.null(mean) || !is.null(sterr)) {
+    if (is.null(mean) || is.null(sterr))
+      stop("If mean or sterr is supplied, BOTH must be supplied")
+    obj <- new("waldCI",
+               mean  = as.numeric(mean),
+               sterr = as.numeric(sterr),
+               level = as.numeric(level))
+    validObject(obj); return(obj)
+  }
+
+  if (!is.null(lb) || !is.null(ub)) {
+    if (is.null(lb) || is.null(ub))
+      stop("If lb or ub is supplied, BOTH must be supplied")
+    par <- .wald_from_bounds(as.numeric(lb), as.numeric(ub), as.numeric(level))
+    obj <- new("waldCI",
+               mean  = par["mean"],
+               sterr = par["sterr"],
+               level = as.numeric(level))
+    validObject(obj); return(obj)
+  }
+
+  stop("Supply (level, mean, sterr) OR (level, lb, ub)")
+}
+```
+
+**Show method**
+
+```{r}
+setGeneric("show", function(object, level = 0.95, digits = 4){
+             standardGeneric("show")
+  }
+)
+
+setMethod("show", "waldCI", function(object) {
+  b <- .wald_bounds(object@mean, object@sterr, object@level)
+  cat("waldCI:\n",
+      "  level = ", format(object@level), "\n",
+      "  CI    = (", format(b["lb"]), ", ", format(b["ub"]), ")\n",
+      "  mean  = ", format(object@mean), "\n",
+      "  sterr = ", format(object@sterr), "\n", sep = "")
+  invisible(object)
+})
+```
+
+**Accessors**
+
+```{r}
+setGeneric("lb", function(x) standardGeneric("lb"))
+setMethod ("lb", "waldCI", 
+           function(x) .wald_bounds(x@mean, x@sterr, x@level)["lb"])
+
+setGeneric("ub", function(x) standardGeneric("ub"))
+setMethod ("ub", "waldCI", 
+           function(x) .wald_bounds(x@mean, x@sterr, x@level)["ub"])
+
+setGeneric("level", function(x) standardGeneric("level"))
+setMethod ("level", "waldCI", function(x) x@level)
+
+# mean()
+setMethod("mean", "waldCI", function(x, ...) x@mean)
+
+# sterr()
+setGeneric("sterr", function(x) standardGeneric("sterr"))
+setMethod("sterr", "waldCI", function(x) x@sterr)
+```
+
+**Setters**
+
+```{r}
+setGeneric("lb<-", function(x, value) standardGeneric("lb<-"))
+setMethod ("lb<-", "waldCI", function(x, value) {
+  other <- ub(x)
+  par <- .wald_from_bounds(as.numeric(value), other, x@level)
+  x@mean <- par["mean"]
+  x@sterr <- par["sterr"]
+  validObject(x)
+  x
+})
+
+setGeneric("ub<-", function(x, value) standardGeneric("ub<-"))
+setMethod ("ub<-", "waldCI", function(x, value) {
+  other <- lb(x)
+  par <- .wald_from_bounds(other, as.numeric(value), x@level)
+  x@mean <- par["mean"]
+  x@sterr <- par["sterr"]
+  validObject(x)
+  x
+})
+
+setGeneric("mean<-", function(x, value) standardGeneric("mean<-"))
+setMethod ("mean<-", "waldCI", function(x, value) {
+  x@mean <- as.numeric(value)
+  validObject(x)
+  x
+})
+
+setGeneric("sterr<-", function(x, value) standardGeneric("sterr<-"))
+setMethod ("sterr<-", "waldCI", function(x, value) {
+  x@sterr <- as.numeric(value)
+  validObject(x)
+  x
+})
+
+setGeneric("level<-", function(x, value) standardGeneric("level<-"))
+setMethod ("level<-", "waldCI", function(x, value) {
+  x@level <- as.numeric(value)
+  validObject(x)
+  x
+})
+```
+
+**contains**
+
+```{r}
+setGeneric("contains", function(x, value) standardGeneric("contains"))
+
+setMethod ("contains", "waldCI", function(x, value) {
+  b <- .wald_bounds(x@mean, x@sterr, x@level)
+  as.numeric(value) >= b["lb"] && as.numeric(value) <= b["ub"]
+})
+```
+
+**overlap**
+
+```{r}
+setGeneric("overlap", function(x, y) standardGeneric("overlap"))
+
+setMethod ("overlap", c("waldCI","waldCI"), function(x, y) {
+  b1 <- .wald_bounds(x@mean, x@sterr, x@level)
+  b2 <- .wald_bounds(y@mean, y@sterr, y@level)
+  max(b1["lb"], b2["lb"]) <= min(b1["ub"], b2["ub"])
+})
+```
+
+**as.numeric**
+
+```{r}
+setMethod("as.numeric", "waldCI", function(x, ...) {
+  .wald_bounds(x@mean, x@sterr, x@level)[c("lb","ub")]
+})
+
+```
+
+**transform**
+
+```{r}
+transformCI <- function(x, fun) {
+  stopifnot(is(x, "waldCI"), is.function(fun))
+  message("Note: only monotonic functions make sense for transforming CIs.")
+  lo <- lb(x)
+  hi <- ub(x)
+  tlo <- fun(lo)
+  thi <- fun(hi)
+  new_lb <- min(tlo, thi)
+  new_ub <- max(tlo, thi)
+  waldCI(level = x@level, lb = new_lb, ub = new_ub)
+}
+```
+
+## (b).
+
+```{r}
+ci1 <- waldCI(lb = 17.2, ub = 24.7, level = 0.95)
+
+ci2 <- waldCI(mean = 13, sterr = 2.5, level = 0.99)
+
+ci3 <- waldCI(lb = 27.43, ub = 39.22, level = 0.75)
+```
+
+```{r}
+ci1
+```
+
+```{r}
+ci2
+```
+
+```{r}
+ci3
+```
+
+```{r}
+as.numeric(ci1)
+```
+
+```{r}
+as.numeric(ci2)
+```
+
+```{r}
+as.numeric(ci3)
+```
+
+```{r}
+lb(ci2)
+```
+
+```{r}
+ub(ci2)
+```
+
+```{r}
+mean(ci1)
+```
+
+```{r}
+sterr(ci3)
+```
+
+```{r}
+lb(ci2) <- 10.5
+```
+
+```{r}
+mean(ci3) <- 34
+```
+
+```{r}
+level(ci3) <- .8
+```
+
+```{r}
+contains(ci1, 17)
+```
+
+```{r}
+contains(ci3, 44)
+```
+
+```{r}
+overlap(ci1, ci2)
+```
+
+```{r}
+eci1 <- transformCI(ci1, sqrt)
+```
+
+```{r}
+eci1
+```
+
+```{r}
+mean(transformCI(ci2, log))
+```
+
+## (c).
+
+**negative standard error**
+
+```{r}
+bad_neg_se <- try(
+  waldCI(mean = 10, sterr = -2, level = 0.95),
+  silent = TRUE
+)
+bad_neg_se
+```
+
+We use negative standard in waldCI and it shows the error I set.
+
+**lb \> ub**
+
+```{r}
+bad_bounds <- try(
+  waldCI(lb = 30, ub = 10, level = 0.95),
+  silent = TRUE
+)
+bad_bounds
+```
+
+We let lb bigger than ub and it make the error.
+
+**Infinite bounds**
+
+```{r}
+bad_inf1 <- try(
+  waldCI(lb = -Inf, ub = 5, level = 0.95),
+  silent = TRUE
+)
+bad_inf1
+
+bad_inf2 <- try(
+  waldCI(lb = 1, ub = Inf, level = 0.95),
+  silent = TRUE
+)
+bad_inf2
+```
+
+We use infinite upper and lower bounds and all make errors.
+
+**invalid use of the setters**
+
+```{r}
+ci_tmp <- waldCI(lb = 10, ub = 20, level = 0.95)
+
+bad_set2 <- try(
+  { lb(ci_tmp) <- 1000 },
+  silent = TRUE
+)
+bad_set2
+
+bad_len <- try(
+  { lb(ci_tmp) <- c(7, 8) },
+  silent = TRUE
+)
+bad_len
+
+bad_na <- try(
+  { lb(ci_tmp) <- NA },
+  silent = TRUE
+)
+bad_na
+
+bad_level <- try(
+  { lb(ci_tmp, level = 2) <- 15 },
+  silent = TRUE
+)
+bad_level
+```
+
+We try different illegal input such as lb \> ub, infinte numbers, length over 1 and error level in setters and all make error.
+
+# Problem 3 - plotly
+
+```{r}
+library(readr)
+library(plotly)
+library(dplyr)
+library(slider)
+library(lubridate)
+```
+
+```{r}
+df_states <- read_csv("us-states.csv", show_col_types = FALSE)
+```
+
+## (a).
+
+```{r}
+df_states <- df_states %>%
+  mutate(date = as.Date(date))
+```
+
+```{r}
+df_us <- df_states %>%
+  group_by(date) %>%
+  summarise(
+    cases_avg = sum(cases_avg, na.rm = TRUE),
+    .groups = "drop"
+  )
+```
+
+```{r}
+fig_a <- plot_ly(
+  data = df_us,
+  x = ~date,
+  y = ~cases_avg,
+  type = "scatter",
+  mode = "lines",
+  line = list(width = 2)
+) %>%
+  layout(
+    title = list(
+      text = "US COVID-19 — 7-day Average New Cases<br><sup>NYTimes rolling averages (national total)</sup>"
+    ),
+    xaxis = list(
+      title = NULL
+    ),
+    yaxis = list(
+      title = "Cases (7-day avg)",
+      tickformat = ",",
+      rangemode = "tozero"
+    )
+  )
+
+fig_a
+```
+
+Since daily counts may jump around and might be noisy, we could use 7-day avg to shows the real trend in recent periods.
+
+The plot shows **a single major spike at the beginning of 2022**. In addition, there are roughly **five minor spikes**—around mid-2020, late-2020 to early-2021, mid-to-late 2021, mid-2022, and late-2022 to early-2023.
+
+## (b).
+
+```{r}
+ranked <- df_states %>%
+  group_by(state) %>%
+  summarise(
+    overall_rate = mean(cases_avg_per_100k, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  arrange(desc(overall_rate))
+
+top_state <- ranked %>% slice_head(n = 1) %>% pull(state)
+bot_state <- ranked %>% slice_tail(n = 1) %>% pull(state)
+
+compare_df <- df_states %>%
+  filter(state %in% c(top_state, bot_state))
+```
+
+```{r}
+fig_b <- plot_ly()
+
+fig_b <- fig_b %>%
+  add_trace(
+    data = compare_df %>% filter(state == top_state),
+    x = ~date,
+    y = ~cases_avg_per_100k,
+    type = "scatter",
+    mode = "lines",
+    name = paste0(top_state, " (highest overall rate)"),
+    line = list(width = 2)
+  ) %>%
+  add_trace(
+    data = compare_df %>% filter(state == bot_state),
+    x = ~date,
+    y = ~cases_avg_per_100k,
+    type = "scatter",
+    mode = "lines",
+    name = paste0(bot_state, " (lowest overall rate)"),
+    line = list(width = 2, dash = "dash")
+  ) %>%
+  layout(
+    title = list(
+      text = paste0(
+        "COVID-19 — 7-day avg cases per 100k<br>",
+        "<sup>Highest vs Lowest state by overall mean rate per population</sup>"
+      )
+    ),
+    xaxis = list(title = NULL),
+    yaxis = list(
+      title = "Cases per 100k (7-day avg)",
+      tickformat = ".1f",
+      rangemode = "tozero"
+    ),
+    legend = list(
+      orientation = "h",
+      x = 0,
+      y = -0.2
+    )
+  )
+
+fig_b
+
+```
+
+**American Samoa has highest** overall mean rate and **Maryland has lowest**.\
+American Samoa shows **short, very high spikes** (peaks \>500 per 100k) with long stretches **near zero** between waves, whereas Maryland’s peaks are **much lower** (about 220 per 100k) but **broader and more persistent**, with a higher baseline and ongoing mid-sized waves. The peak of American Samoa is between 2022\~2023 and the peak of Maryland is around winter 2021.
+
+## (c).
+
+From problem (a) we know the first minor peak is around 2020, so we focus on 2020 data.
+
+```{r}
+df_states <- df_states %>%
+  rename(Date = any_of(c("Date", "date")),
+         State = any_of(c("State", "state"))) %>%
+  mutate(Date = as.Date(Date))
+covid20 <- df_states %>%
+  filter(lubridate::year(Date) == 2020) %>%
+  select(State, Date, cases_avg_per_100k)
+```
+
+```{r, warning=FALSE, message=FALSE}
+p <- plot_ly(
+  data = covid20,
+  x = ~Date,
+  y = ~cases_avg_per_100k,
+  color = ~State,
+  type = "scatter",
+  mode = "lines",
+  hovertemplate = "<b>%{text}</b><br>%{x|%Y-%m-%d}<br>Cases/100k: %{y:.1f}<extra></extra>",
+  text = ~State
+) %>%
+  layout(
+    yaxis = list(title = "COVID cases per 100k"),
+    showlegend = FALSE
+  )
+
+p
+```
+
+Then we could focus on the earliest peak: from Mar to May 2020.
+
+```{r, warning=FALSE, message=FALSE}
+covid_mar_may <- covid20 %>% 
+  filter(lubridate::month(Date) %in% 3:5)
+
+p <- plot_ly(
+  covid_mar_may,
+  x = ~Date, y = ~cases_avg_per_100k,
+  color = ~State,
+  type = "scatter", mode = "lines",
+  hovertemplate = "<b>%{text}</b><br>%{x|%Y-%m-%d}<br>Cases/100k: %{y:.1f}<extra></extra>",
+  text = ~State
+) %>%
+  layout(yaxis = list(title = "COVID cases per 100k"))
+
+p
+```
+
+Then we focus on cases over 20:
+
+```{r, warning=FALSE, message=FALSE}
+covid_thr <- covid_mar_may %>% filter(cases_avg_per_100k > 20)
+
+p <- plot_ly(
+  covid_thr,
+  x = ~Date, y = ~cases_avg_per_100k,
+  color = ~State,
+  type = "scatter", mode = "lines",
+  hovertemplate = "<b>%{text}</b><br>%{x|%Y-%m-%d}<br>Cases/100k: %{y:.1f}<extra></extra>",
+  text = ~State
+) %>%
+  layout(
+    title = paste0("Days with cases_avg_per_100k > 20"),
+    yaxis = list(title = "COVID cases per 100k")
+  )
+
+p
+```
+
+New York is obviously the earliest and highest, then New Jersey, Louisiana and Guam. However, its difficult to decide the rank of Massachusetts and Rhode Island, it seems closely and we include them together.
+
+```{r}
+topstates <- c("New York","New Jersey","Louisiana",
+               "Guam","Massachusetts","Rhode Island")
+
+all_states <- sort(unique(covid20$State))
+cols <- setNames(rep("lightgrey", length(all_states)), all_states)
+
+palette_top <- c("red","blue","green","purple","orange","yellow")
+cols[topstates] <- palette_top[seq_along(topstates)]
+
+p <- plot_ly()
+for (st in all_states) {
+  dat <- subset(covid20, State == st)
+  hl  <- st %in% topstates
+  p <- add_lines(
+    p, data = dat,
+    x = ~Date, y = ~cases_avg_per_100k,
+    name = st,
+    line = list(color = cols[st], width = if (hl) 3 else 1),
+    hovertemplate = paste0("<b>", st, "</b><br>",
+                           "%{x|%Y-%m-%d}<br>Cases/100k: %{y:.1f}<extra></extra>"),
+    showlegend = hl
+  )
+}
+
+p <- layout(
+  p,
+  xaxis = list(title = "Month of 2020"),
+  yaxis = list(title = "COVID cases per 100k"),
+  legend = list(
+    x = 0, y = 1, xanchor = "left", yanchor = "top",
+    bgcolor = "rgba(255,255,255,0.6)"
+  )
+)
+p
+```
