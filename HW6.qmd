@@ -1,0 +1,615 @@
+---
+title: "Stats-506 Problem Set #6"
+format:
+  html:
+    self-contained: true
+author: "Zhekai Liu"
+subtitle: "[GitHub Repository: https://github.com/zkl2002/Stats-506/](https://github.com/zkl2002/Stats-506/)"
+editor: visual
+---
+
+# Problem 1 - **Rcpp**
+
+```{r}
+library(Rcpp)
+
+sourceCpp(code = '
+// [[Rcpp::depends(Rcpp)]]
+#include <Rcpp.h>
+using namespace Rcpp;
+
+// [[Rcpp::export]]
+double C_mean(NumericVector v) {
+  double sum = 0.0;
+  int n = v.size();
+  for (int i = 0; i < n; ++i) {
+    sum += v[i];
+  }
+  return sum / n;
+}
+
+// [[Rcpp::export]]
+double C_moment(NumericVector v, int k) {
+  int n = v.size();
+
+  double mean = C_mean(v);
+
+  double acc = 0.0;
+  for (int i = 0; i < n; ++i) {
+    double centered = v[i] - mean;
+
+    double term = 1.0;
+    for (int j = 0; j < k; ++j) {
+      term *= centered;
+    }
+
+    acc += term;
+  }
+
+  return acc / n;
+}
+')
+```
+
+```{r}
+library(e1071)
+
+set.seed(123)
+x <- rnorm(1000)
+k <- 3
+
+C_moment(x, k)
+```
+
+```{r}
+moment(x, order = k, center = TRUE)
+```
+
+We could see that result of `C_moment` is same as `e1071`.
+
+# Problem 2 - **Expanding on `waldCI`**
+
+```{r}
+source("waldCI.R")
+```
+
+## (a).
+
+```{r}
+#' Bootstrap-based Wald confidence interval
+#'
+#' Extends \code{waldCI} with information about the bootstrap procedure.
+#'
+#' @slot fun Function taking a data.frame and returning a scalar.
+#' @slot data Data frame used for resampling.
+#' @slot reps Integer number of bootstrap replications.
+#' @slot compute Character, "serial" or "parallel".
+#' @slot bootStats Numeric vector of bootstrap statistics.
+setClass(
+  "bootstrapWaldCI",
+  slots = c(
+    fun       = "function",
+    data      = "data.frame",
+    reps      = "integer",
+    compute   = "character",
+    bootStats = "numeric"
+  ),
+  contains = "waldCI"
+)
+
+#' Bootstrap helper
+#'
+#' Compute bootstrap replicate statistics, serially or in parallel.
+#'
+#' @param fun Function mapping a data.frame to a scalar.
+#' @param data Data frame to resample rows from.
+#' @param reps Number of bootstrap replications.
+#' @param compute "serial" or "parallel".
+#' @return Numeric vector of bootstrap statistics.
+.bootstrap_stats <- function(fun, data, reps, compute = c("serial", "parallel")) {
+  compute <- match.arg(compute)
+  reps    <- as.integer(reps)
+  n       <- nrow(data)
+
+  stat_one <- function(idx) {
+    fun(data[idx, , drop = FALSE])
+  }
+
+  if (compute == "serial") {
+    bootStats <- replicate(reps, {
+      idx <- sample.int(n, n, replace = TRUE)
+      stat_one(idx)
+    })
+
+  } else {
+    bootStats <- NULL
+    requireNamespace("parallel")
+
+    cl <- parallel::makeCluster(parallel::detectCores())
+    on.exit(parallel::stopCluster(cl), add = TRUE)
+
+    bootStats <- unlist(parallel::parLapply(
+      cl,
+      X = seq_len(reps),
+      fun = function(b, n, data, stat_fun) {
+        idx <- sample.int(n, n, replace = TRUE)
+        stat_fun(data[idx, , drop = FALSE])
+      },
+      n        = n,
+      data     = data,
+      stat_fun = fun
+    ))
+  }
+
+  as.numeric(bootStats)
+}
+
+#' Construct a bootstrapWaldCI object
+#'
+#' Run a bootstrap for a scalar statistic and form a Wald CI.
+#'
+#' @param fun Function mapping a data.frame to a scalar.
+#' @param data Data frame to resample from.
+#' @param reps Number of bootstrap replications.
+#' @param level Confidence level in (0, 1).
+#' @param compute "serial" or "parallel".
+#' @return An object of class \code{bootstrapWaldCI}.
+makeBootstrapCI <- function(fun,
+                            data,
+                            reps    = 100L,
+                            level   = 0.95,
+                            compute = c("serial", "parallel")) {
+  if (!is.function(fun))
+    stop("'fun' must be a function returning a scalar")
+  if (!is.data.frame(data))
+    stop("'data' must be a data.frame")
+
+  compute <- match.arg(compute)
+  reps    <- as.integer(reps)
+
+  bootStats <- .bootstrap_stats(fun, data, reps, compute)
+
+  est <- mean(bootStats)
+  se  <- sd(bootStats)
+
+  parent_obj <- waldCI(level = level, mean = est, sterr = se)
+
+  obj <- new("bootstrapWaldCI",
+             mean      = parent_obj@mean,
+             sterr     = parent_obj@sterr,
+             level     = parent_obj@level,
+             fun       = fun,
+             data      = data,
+             reps      = reps,
+             compute   = compute,
+             bootStats = bootStats)
+
+  validObject(obj)
+  obj
+}
+
+#' Re-run the bootstrap for a bootstrapWaldCI object
+#'
+#' @param object A \code{bootstrapWaldCI} object.
+#' @return The updated object, invisibly.
+setGeneric("rebootstrap", function(object) standardGeneric("rebootstrap"))
+
+#' @describeIn rebootstrap Method for \code{bootstrapWaldCI}.
+setMethod(
+  "rebootstrap",
+  signature = "bootstrapWaldCI",
+  definition = function(object) {
+    fun     <- object@fun
+    data    <- object@data
+    reps    <- object@reps
+    level   <- object@level
+    compute <- object@compute
+
+    bootStats <- .bootstrap_stats(fun, data, reps, compute)
+
+    est <- mean(bootStats)
+    se  <- sd(bootStats)
+
+    object@mean      <- est
+    object@sterr     <- se
+    object@bootStats <- bootStats
+
+    validObject(object)
+    object
+  }
+)
+
+```
+
+## (b).
+
+```{r}
+ci1 <- makeBootstrapCI(function(x) mean(x$y),
+                       ggplot2::diamonds,
+                       reps = 1000)
+ci1
+```
+
+```{r}
+rebootstrap(ci1)
+```
+
+The two methods provide the same result, so I'll compare the time they need.
+
+```{r}
+set.seed(123)
+
+t_serial <- system.time(
+  ci_serial <- makeBootstrapCI(
+    function(x) mean(x$y),
+    ggplot2::diamonds,
+    reps    = 1000,
+    compute = "serial"
+  )
+)
+
+t_parallel <- system.time(
+  ci_parallel <- makeBootstrapCI(
+    function(x) mean(x$y),
+    ggplot2::diamonds,
+    reps    = 1000,
+    compute = "parallel"
+  )
+)
+```
+
+```{r}
+t_serial
+```
+
+```{r}
+t_parallel
+```
+
+For `reps = 1000` on the `diamonds` data, the serial implementation (`compute = "serial"`) consistently ran slightly faster than the parallel implementation (`compute = "parallel"`). In this setting, the bootstrap statistic is very cheap to compute (just the mean of `y`), so the overhead of creating and shutting down the parallel cluster, as well as exporting the data and function to the workers, dominates any potential speed-up from using multiple cores.
+
+## (c).
+
+```{r}
+#' Displacement coefficient from mpg model
+#'
+#' Fits and returns the coefficient on \code{disp}.
+#'
+#' @param dat A data frame with columns \code{mpg}, \code{cyl}, \code{disp}, and \code{wt}.
+#'
+#' @return Numeric scalar: the estimated coefficient for \code{disp}.
+dispCoef <- function(dat) {
+  fit <- lm(mpg ~ cyl + disp + wt, data = dat)
+  unname(coef(fit)["disp"])
+}
+```
+
+```{r}
+ci2 <- makeBootstrapCI(
+  dispCoef,
+  mtcars,
+  reps = 1000
+)
+ci2
+```
+
+```{r}
+rebootstrap(ci2)
+```
+
+The two methods provide the same result, so I'll compare the time they need.
+
+```{r}
+set.seed(123)
+
+t2_serial <- system.time(
+  ci2_serial <- makeBootstrapCI(
+    dispCoef,
+    mtcars,
+    reps    = 1000,
+    compute = "serial"
+  )
+)
+
+t2_parallel <- system.time(
+  ci2_parallel <- makeBootstrapCI(
+    dispCoef,
+    mtcars,
+    reps    = 1000,
+    compute = "parallel"
+  )
+)
+```
+
+```{r}
+t2_serial
+```
+
+```{r}
+t2_parallel
+```
+
+For the `dispCoef` statistic, which fits the linear model `mpg ~ cyl + disp + wt` on each bootstrap sample, I compared the serial and parallel versions of `makeBootstrapCI` with 1000 replications. Across repeated runs, the serial implementation consistently ran faster than the parallel one. Although each bootstrap replication is more expensive than in the previous mean example, the cost per replication is still relatively small, so the overhead of creating and managing the parallel cluster dominates any potential speed-up. In this setting, the serial computation remains preferable.
+
+# Problem 3 - **Large data**
+
+```{r}
+source("ps06q3.R")
+```
+
+## (a).
+
+```{r}
+library(dplyr)
+library(lme4)
+library(ggplot2)
+library(parallel)
+```
+
+```{r}
+df_std <- df %>%
+  group_by(country) %>%
+  mutate(
+    prior_gpa_z     = as.numeric(scale(prior_gpa)),
+    forum_posts_z   = as.numeric(scale(forum_posts)),
+    quiz_attempts_z = as.numeric(scale(quiz_attempts))
+  ) %>%
+  ungroup()
+```
+
+```{r}
+df_list <- split(df_std, df_std$country)
+
+countries <- names(df_list)
+n_country <- length(df_list)
+
+fits  <- vector("list", n_country)
+times <- vector("list", n_country)
+names(fits)  <- countries
+names(times) <- countries
+
+for (i in seq_along(df_list)) {
+  dat <- df_list[[i]]
+  cat("Fitting country:", countries[i], "(", i, "/", n_country, ")\n")
+
+  tm <- system.time({
+    fits[[i]] <- glmer(
+      completed_course ~ prior_gpa_z + forum_posts_z + quiz_attempts_z +
+        (1 | device_type),
+      data   = dat,
+      family = binomial(),
+      control = glmerControl(optimizer = "bobyqa")
+    )
+  })
+
+  times[[i]] <- tm
+  cat("  elapsed =", tm["elapsed"], "seconds\n\n")
+}
+```
+
+```{r}
+beta_forum <- sapply(fits, function(fit) {
+  fixef(fit)["forum_posts_z"]
+})
+
+se_forum <- sapply(fits, function(fit) {
+  sqrt(vcov(fit)["forum_posts_z", "forum_posts_z"])
+})
+
+coef_df <- data.frame(
+  country    = names(beta_forum),
+  beta_forum = as.numeric(beta_forum),
+  se_forum   = as.numeric(se_forum),
+  row.names  = NULL
+)
+coef_df$country <- sub("\\.forum_posts_z$", "", coef_df$country)
+```
+
+```{r}
+ggplot(coef_df, aes(x = country, y = beta_forum)) +
+  geom_point(size = 2) +
+  geom_errorbar(
+    aes(
+      ymin = beta_forum - 1.96 * se_forum,
+      ymax = beta_forum + 1.96 * se_forum
+    ),
+    width = 0.1
+  ) +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  labs(
+    title = "Effect of forum posts on course completion by country",
+    x = "Country",
+    y = "Log-odds coefficient for standardized forum posts"
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(
+      angle = 45,
+      hjust = 1
+    )
+  )
+```
+
+```{r}
+time_df <- do.call(
+  rbind,
+  lapply(seq_along(times), function(i) {
+    cbind(
+      country = countries[i],
+      as.data.frame(as.list(times[[i]]))
+    )
+  })
+)
+row.names(time_df) <- NULL
+
+time_df
+```
+
+Across the six country-specific mixed-effects models, runtime is longest for the “Other”, US, and India groups and much shorter for Germany, Nigeria, and especially Lithuania, reflecting the much larger sample sizes in the first three countries. In other words, GLMM computation time here is driven mainly by how many observations each country has.
+
+## (b).
+
+```{r}
+coef_df_a <- coef_df
+
+fit_forum <- function(dat) {
+  fit <- glmer(
+    completed_course ~ prior_gpa_z + forum_posts_z + quiz_attempts_z +
+      (1 | device_type),
+    data   = dat,
+    family = binomial(),
+    control = glmerControl(optimizer = "bobyqa")
+  )
+  beta <- fixef(fit)["forum_posts_z"]
+  se   <- sqrt(vcov(fit)["forum_posts_z", "forum_posts_z"])
+  c(beta = beta, se = se)
+}
+
+t_parallel_all <- system.time({
+  cl <- makeCluster(detectCores())
+  on.exit(stopCluster(cl), add = TRUE)
+
+  clusterEvalQ(cl, library(lme4))
+
+  res <- parLapply(cl, df_list, fit_forum)
+})
+```
+
+```{r}
+t_parallel_all
+```
+
+```{r}
+countries <- names(df_list)
+
+beta_forum_b <- sapply(res, function(x) as.numeric(x[1]))
+se_forum_b   <- sapply(res, function(x) as.numeric(x[2]))
+
+coef_df_b <- data.frame(
+  country    = countries,
+  beta_forum = beta_forum_b,
+  se_forum   = se_forum_b,
+  row.names  = NULL
+)
+```
+
+```{r}
+all.equal(
+  coef_df_a[order(coef_df_a$country), ],
+  coef_df_b[order(coef_df_b$country), ]
+)
+```
+
+The parallel version roughly halves the total runtime compared with the serial version, while yielding essentially identical coefficient estimates.
+
+# Problem 4 - **data.table**
+
+```{r}
+library(data.table)
+```
+
+```{r}
+tennis <- fread("atp_matches_2019.csv")
+```
+
+## (a).
+
+```{r}
+tennis[grepl("Davis Cup", tourney_name)][1:5]
+```
+
+```{r}
+tennis[, .N, 
+       by = .(tourney_name = sub("Davis.*", "Davis Cup", tourney_name))][, .N]
+```
+
+From PS4 we known that some tournaments, such as the Davis Cup, appear under multiple variant names. Therefore, we replaced all names starting with “Davis…” with “Davis Cup,” then grouped by the normalized `tourney_name` and counted the groups. This yields **69**, indicating there are 69 distinct tournaments after merging the name variants.
+
+## (b).
+
+```{r}
+one_per_tourney <- tennis[order(tourney_name, -match_num)
+                          ][, .SD[1L], by = tourney_name]
+
+multiwinners <- one_per_tourney[, .(wins = .N), by = winner_name
+                                ][order(-wins)][wins > 1]
+```
+
+```{r}
+nrow(multiwinners)
+```
+
+**17** players won more than one tournament
+
+```{r}
+wins_by_player <- one_per_tourney[, .(wins = .N), by = winner_name]
+max_wins <- wins_by_player[, max(wins)]
+n_players_with_max <- wins_by_player[wins == max_wins]
+n_players_with_max
+```
+
+**Rafael Nadal** won **9** tournaments which is the most.
+
+## (c).
+
+```{r}
+aces_stats <- tennis[
+  , .(diff = w_ace - l_ace)
+][
+  !is.na(diff)
+][
+  , {
+      n  <- .N 
+      m  <- mean(diff)
+      sd <- sd(diff)
+      se <- sd / sqrt(n)
+      t  <- m / se
+      df <- n - 1L
+      p_two_sided <- 2 * (1 - stats::pt(abs(t), df = df))
+      ci_low  <- m - stats::qt(0.975, df) * se
+      ci_high <- m + stats::qt(0.975, df) * se
+
+      list(n = n, mean_diff = m, sd = sd, se = se, t = t, df = df,
+        p_two_sided = p_two_sided, ci_low = ci_low, ci_high = ci_high)
+    }
+]
+
+aces_stats
+```
+
+There is strong statistical evidence that winners record more aces than losers. The estimated mean difference is about **1.705 aces per match** (95% CI: **1.435 to 1.975**) with nearly 0 p-value, so winners, on average, usually have more than one aces than losers.
+
+## (d).
+
+```{r}
+players_long <- rbindlist(list(
+  tennis[, .(player_id = winner_id,
+             player_name = winner_name,
+             won = 1L)],
+  tennis[, .(player_id = loser_id,
+             player_name = loser_name,
+             won = 0L)]
+))
+
+player_summary <- players_long[
+  , .(
+      matches  = .N,
+      wins     = sum(won),
+      win_rate = sum(won) / .N
+    ),
+  by = .(player_id, player_name)
+]
+
+qualified <- player_summary[matches >= 5]
+
+best_rate <- max(qualified$win_rate)
+top_players <- qualified[win_rate == best_rate][
+  order(-win_rate, -matches, player_name)
+]
+
+qualified[win_rate == best_rate][
+  order(-win_rate, -matches, player_name)
+]
+```
+
+Among players with **≥ 5 matches**, the highest win rate is **Rafael Nadal** with **60 wins in 69 matches** — win rate **≈ 86.96%** .
